@@ -35,11 +35,11 @@ No manual steps — just select your model with `/model` and everything is appli
 ### Generation settings
 | Model | Temperature | Reasoning Effort | Why |
 |-------|-------------|------------------|-----|
-| `gemma-4-12b` | 0.7 | `low` | Keeps reasoning concise so output tokens go to content |
+| `gemma-4-12b` | 0.7 | `none` | Eliminates reasoning overhead so all tokens go to content |
 
-Settings are injected per-request via `before_provider_request`, overriding the server defaults. The server's reasoning mode (`--reasoning on`) is preserved — `reasoning_effort` controls *how much* the model reasons, not whether it reasons at all.
+Settings are injected per-request via `before_provider_request`, overriding the server defaults. Even with the server's `--reasoning on`, `reasoning_effort: "none"` plus the guardrail instruction to skip reasoning/thought blocks ensures all output tokens go to actual content.
 
-Accepted values for `reasoningEffort`: `"none"`, `"low"`, `"medium"`, `"high"`.
+Accepted values for `reasoningEffort`: `"none"`, `"low"`, `"medium"`, `"high"`. Note: the server may still produce some internal reasoning regardless of this setting — the guardrail prompt instruction reinforces the no-reasoning behavior in the model's output.
 
 ### Why temperature control matters
 At temp 1.5, Gemma 4 12B produces verbose reasoning that can consume the entire output budget before producing content. At temp 0.7, it reasons more concisely and reliably produces the actual output. The extension lets you keep the server at 1.5 for interactive exploration while automatically lowering it for structured tasks.

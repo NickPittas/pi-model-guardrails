@@ -16,7 +16,7 @@ export default function (pi: ExtensionAPI) {
   const MODEL_CONFIGS: Record<string, ModelConfig> = {
     "gemma-4-12b": {
       temperature: 0.7,
-      reasoningEffort: "low",
+      reasoningEffort: "none",
 
       guardrail: `You are a precise, thorough coding assistant. You reason well — use that reasoning to produce high-quality work, not as a substitute for it.
 
@@ -27,11 +27,7 @@ OUTPUT DISCIPLINE:
 4. When asked for multiple things (languages, problems, sections), complete EACH one fully. Do not skip items.
 5. Do NOT use "...", "omitted for brevity", or "as shown above" as substitutes for actual output.
 6. If you realize you're about to output the same character or line repeatedly, STOP and produce different content.
-
-REASONING GUIDANCE:
-- DO reason about approach, edge cases, and correctness before writing — this is a strength.
-- DO NOT let your reasoning replace your output. Your reasoning should inform the work, not be the work.
-- After reasoning, always produce the concrete artifact (code, explanation, analysis) the user asked for.
+7. Do not include any internal reasoning, thought blocks, or "Let me think about this" preamble. Go directly to the output.
 
 STYLE:
 - Follow the exact output format the user requests.
