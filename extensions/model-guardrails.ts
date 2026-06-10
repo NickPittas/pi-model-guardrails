@@ -9,32 +9,36 @@ export default function (pi: ExtensionAPI) {
     guardrail?: string;
     temperature?: number;
     maxTokens?: number;
+    // Reasoning budget in tokens. 0 = no reasoning, ~256 = balanced, ~512+ = deep.
+    // Requires llama.cpp server with reasoning support.
+    defaultThinkingBudget?: number;
   }
 
-  // Per-agent reasoning effort overrides.
-  // Detected by searching the agent's system prompt for these substrings.
-  // Keys are lowercase substrings to match in the system prompt.
-  const AGENT_REASONING: Record<string, string> = {
-    // High reasoning: tasks that need deep analysis
-    "debugger": "high",
-    "security": "high",
-    "algo-solver": "high",
+  // Per-agent thinking budget overrides (in tokens).
+  // Detected by searching the system prompt for these substrings.
+  // 0 = no reasoning, 128 = brief, 256 = balanced, 512+ = deep analysis
+  const AGENT_THINKING_BUDGET: Record<string, number> = {
+    // Deep analysis tasks — reasoning is the model's strength
+    "debugger": 512,
+    "security": 512,
+    "algo-solver": 512,
 
-    // Medium reasoning: tasks that need understanding but output is priority
-    "reviewer": "medium",
-    "refactor": "medium",
+    // Balanced — needs understanding but output volume matters
+    "reviewer": 256,
+    "refactor": 256,
 
-    // Low reasoning: volume tasks where tokens should go to content
-    "polyglot": "low",
-    "architect": "low",
-    "code-gen": "low",
+    // Brief — volume tasks where tokens should go to content
+    "polyglot": 64,
+    "architect": 64,
+    "code-gen": 64,
   };
 
-  const DEFAULT_REASONING = "none";
+  const DEFAULT_THINKING_BUDGET = 0; // No reasoning for unknown tasks
 
   const MODEL_CONFIGS: Record<string, ModelConfig> = {
     "gemma-4-12b": {
       temperature: 0.7,
+      defaultThinkingBudget: 0,
 
       guardrail: `You are a precise, thorough coding assistant.
 
@@ -56,7 +60,7 @@ STYLE:
 
   // ── State ──
   let currentModelId: string | undefined;
-  let currentReasoningEffort: string = DEFAULT_REASONING;
+  let currentThinkingBudget: number = DEFAULT_THINKING_BUDGET;
 
   pi.on("model_select", async (event, _ctx) => {
     currentModelId = event.model.id.toLowerCase();
@@ -73,25 +77,27 @@ STYLE:
     return undefined;
   }
 
-  // ── Detect agent type from system prompt and set reasoning level ──
+  // ── Detect agent type from system prompt and set thinking budget ──
   pi.on("before_agent_start", async (event, _ctx) => {
     const config = getModelConfig();
     if (!config) return;
 
     // Detect which agent is running by checking the system prompt
     const prompt = (event.systemPrompt || "").toLowerCase();
-    let detectedReasoning = DEFAULT_REASONING;
-    for (const [substring, reasoning] of Object.entries(AGENT_REASONING)) {
+    let detectedBudget = config.defaultThinkingBudget ?? DEFAULT_THINKING_BUDGET;
+    for (const [substring, budget] of Object.entries(AGENT_THINKING_BUDGET)) {
       if (prompt.includes(substring.toLowerCase())) {
-        detectedReasoning = reasoning;
+        detectedBudget = budget;
         break;
       }
     }
-    currentReasoningEffort = detectedReasoning;
+    currentThinkingBudget = detectedBudget;
 
-    return {
-      systemPrompt: config.guardrail + "\n\n" + event.systemPrompt,
-    };
+    if (config.guardrail) {
+      return {
+        systemPrompt: config.guardrail + "\n\n" + event.systemPrompt,
+      };
+    }
   });
 
   // ── Inject generation settings into API request ──
@@ -112,8 +118,9 @@ STYLE:
       modified = true;
     }
 
-    // Use the reasoning effort detected from the agent type
-    payload.reasoning_effort = currentReasoningEffort;
+    // Inject llama.cpp reasoning control params
+    payload.thinking_budget_tokens = currentThinkingBudget;
+    payload.reasoning_control = true;
     modified = true;
 
     if (modified) return payload;

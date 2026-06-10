@@ -34,31 +34,34 @@ No manual steps — just select your model with `/model` and everything is appli
 
 ### Reasoning strategy
 
-Reasoning is the model's **biggest strength** — but it burns output tokens. The extension automatically adjusts `reasoning_effort` based on which agent is running:
+The extension uses **`thinking_budget_tokens`** (a llama.cpp-specific parameter) to precisely control how many tokens the model spends on reasoning. This is the real lever — unlike `reasoning_effort`, this parameter has exact, measurable control:
 
-| Task Type | Reasoning | Why |
-|-----------|-----------|-----|
-| Debugging (`gemma-debugger`) | `high` | Must trace logic, find edge cases, reason about each bug |
-| Security audit | `high` | Must reason about attack vectors, chaining, severity |
-| Algorithms (`gemma-algo-solver`) | `high` | Must reason about correctness, complexity, edge cases |
-| Code review (`gemma-reviewer`) | `medium` | Needs to understand code deeply, but output is priority |
-| Refactoring | `medium` | Needs to understand before/after, but output is priority |
-| Multi-language (`gemma-polyglot`) | `low` | Volume task — 5-8 complete implementations needed |
-| API design (`gemma-architect`) | `low` | Volume task — YAML + SQL + code + examples |
-| Code generation | `low` | Just needs to write — reasoning wastes tokens |
-| **Default (direct `/model` use)** | **`none`** | **Safe default — all tokens go to content** |
+| Budget | Reasoning | Content | Use case |
+|--------|-----------|---------|----------|
+| 0 | None | All tokens | Direct `/model` use, unknown tasks |
+| 64 | ~178 chars | ~840 chars | Volume tasks (multi-lang, API design) |
+| 128 | ~435 chars | ~883 chars | Balanced tasks |
+| 256 | ~897 chars | ~901 chars | Code review, refactoring |
+| 512 | ~1193 chars | ~770 chars | Debugging, algorithms, security |
 
-The detection works by inspecting the system prompt for agent-identifying substrings (e.g. "debugger", "reviewer", "polyglot").
+The extension auto-detects which agent is running and sets the budget accordingly:
+
+| Agent | Budget | Why |
+|-------|--------|-----|
+| `gemma-debugger` | 512 | Must trace logic, find edge cases, reason about each bug |
+| `gemma-algo-solver` | 512 | Must reason about correctness, complexity |
+| `gemma-reviewer` | 256 | Needs understanding but output volume matters |
+| `gemma-polyglot` | 64 | Volume — needs 5-8 complete implementations |
+| `gemma-architect` | 64 | Volume — YAML + SQL + code + examples |
+| **Default (direct `/model`)** | **0** | **All tokens go to content** |
 
 ### Generation settings
 
-| Model | Temperature | Default Reasoning |
-|-------|-------------|-------------------|
-| `gemma-4-12b` | 0.7 | `none` (overridden per-agent as above) |
+| Model | Temperature | Default Budget |
+|-------|-------------|----------------|
+| `gemma-4-12b` | 0.7 | 0 (overridden per-agent as above) |
 
-Settings are injected per-request via `before_provider_request`. Accepted reasoning values: `"none"`, `"low"`, `"medium"`, `"high"`.
-
-Note: with `--reasoning auto` on llama.cpp, `reasoning_effort` has minimal effect — the model decides how much to reason based on task complexity. The real levers are **temperature** (0.7 keeps reasoning concise) and the **guardrail prompt** (prevents reasoning from leaking into output). The `reasoning_effort` setting is included for forward compatibility and may have stronger effect in future llama.cpp versions.
+Requires llama.cpp server with reasoning support (`--reasoning auto` or `--reasoning on`).
 
 ### Why temperature control matters
 At temp 1.5, Gemma 4 12B produces verbose reasoning that can consume the entire output budget before producing content. At temp 0.7, it reasons more concisely and reliably produces the actual output. The extension lets you keep the server at 1.5 for interactive exploration while automatically lowering it for structured tasks.
@@ -153,8 +156,8 @@ pi subagent delegate.gemma-debugger --model llama-mustafar/gemma-4-12b-it-Q8_0 -
 ## How It Works
 
 1. On `model_select` → tracks the active model ID
-2. On `before_agent_start` → prepends guardrail text to the system prompt
-3. On `before_provider_request` → injects `temperature`, `reasoning_effort`, and `max_tokens` into the API payload
+2. On `before_agent_start` → detects agent type from system prompt, sets thinking budget, prepends guardrail text
+3. On `before_provider_request` → injects `temperature`, `thinking_budget_tokens`, and `reasoning_control` into the API payload
 
 ## License
 
