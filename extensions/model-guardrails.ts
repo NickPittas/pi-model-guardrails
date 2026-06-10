@@ -65,7 +65,7 @@ STYLE:
 - When no format is specified, use clear markdown with headers and code blocks.
 - Prefer producing the actual content over describing what you would produce.`,
     },
-    "qwen3.6-27b": {
+    "qwen3.6": {
       temperature: 0.6, // Qwen server default is already good
       thinkingMode: "chat_template",
       defaultThinkingBudget: 0, // disable thinking by default for content tasks
