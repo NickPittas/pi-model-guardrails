@@ -2,7 +2,7 @@
 name: gemma-reviewer
 package: delegate
 description: Guardrailed code reviewer - anti-repetition, forces full findings + refactored code
-systemPromptMode: replace
+systemPromptMode: prepend
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh

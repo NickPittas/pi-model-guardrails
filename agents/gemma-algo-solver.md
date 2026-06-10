@@ -2,7 +2,7 @@
 name: gemma-algo-solver
 package: delegate
 description: Guardrailed algorithm solver - forces full approach + code + test cases for every problem
-systemPromptMode: replace
+systemPromptMode: prepend
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh

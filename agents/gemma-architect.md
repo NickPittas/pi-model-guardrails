@@ -2,7 +2,7 @@
 name: gemma-architect
 package: delegate
 description: Guardrailed architect - forces full specs, code, schema, not just summaries
-systemPromptMode: replace
+systemPromptMode: prepend
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh

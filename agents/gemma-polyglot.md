@@ -2,7 +2,7 @@
 name: gemma-polyglot
 package: delegate
 description: Guardrailed polyglot programmer - forces complete code in every requested language
-systemPromptMode: replace
+systemPromptMode: prepend
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh

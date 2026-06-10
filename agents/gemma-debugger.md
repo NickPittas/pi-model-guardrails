@@ -2,7 +2,7 @@
 name: gemma-debugger
 package: delegate
 description: Guardrailed Gemma debugger - forces full bug list + complete fixed code output
-systemPromptMode: replace
+systemPromptMode: prepend
 inheritProjectContext: false
 inheritSkills: false
 defaultContext: fresh
