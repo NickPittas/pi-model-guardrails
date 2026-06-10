@@ -1,0 +1,12 @@
+{
+  "name": "pi-model-guardrails",
+  "version": "1.0.0",
+  "description": "Model-specific guardrails for pi coding agent. Automatically injects output discipline and reasoning guidance based on the active model.",
+  "keywords": ["pi-package"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}
