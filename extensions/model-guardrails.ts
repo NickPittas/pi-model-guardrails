@@ -1,7 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import path from "node:path";
+import fs from "node:fs";
 
 export default function (pi: ExtensionAPI) {
-  // Model-specific guardrail system prompts.
+  // ── Model-specific guardrail system prompts ──
   // Key: lowercase model id substring match. Value: system prompt to prepend.
   const GUARDRAILS: Record<string, string> = {
     "gemma-4-12b": `You are a precise, thorough coding assistant. You reason well — use that reasoning to produce high-quality work, not as a substitute for it.
@@ -25,21 +27,19 @@ STYLE:
 - Prefer producing the actual content over describing what you would produce.`,
 
     // Add more models here. Example:
-    // "qwen3": `...`,
+    // "qwen3": `...guardrail text...`,
   };
 
-  // Track current model
+  // ── Guardrail extension ──
   let currentModelId: string | undefined;
 
   pi.on("model_select", async (event, _ctx) => {
     currentModelId = event.model.id.toLowerCase();
   });
 
-  // Inject guardrail into system prompt when a matched model is active
   pi.on("before_agent_start", async (event, _ctx) => {
     if (!currentModelId) return;
 
-    // Find matching guardrail
     let matchedGuardrail: string | undefined;
     for (const [pattern, prompt] of Object.entries(GUARDRAILS)) {
       if (currentModelId.includes(pattern.toLowerCase())) {
@@ -50,9 +50,49 @@ STYLE:
 
     if (!matchedGuardrail) return;
 
-    // Prepend guardrail to system prompt
     return {
       systemPrompt: matchedGuardrail + "\n\n" + event.systemPrompt,
     };
+  });
+
+  // ── Agent installer ──
+  // Copies companion agent configs to ~/.pi/agent/agents/ on first startup.
+  // Safe to run repeatedly — won't overwrite user modifications.
+  pi.on("session_start", async (event, _ctx) => {
+    if (event.reason !== "startup" && event.reason !== "reload") return;
+
+    const agentsDir = path.join(
+      process.env.HOME || "/tmp",
+      ".pi",
+      "agent",
+      "agents"
+    );
+    const packageAgentsDir = path.resolve(__dirname, "..", "agents");
+
+    if (!fs.existsSync(packageAgentsDir)) return;
+    if (!fs.existsSync(agentsDir)) {
+      fs.mkdirSync(agentsDir, { recursive: true });
+    }
+
+    const agentFiles = fs
+      .readdirSync(packageAgentsDir)
+      .filter((f) => f.endsWith(".md"));
+
+    let installed = 0;
+    for (const file of agentFiles) {
+      const targetName = `delegate.${file}`;
+      const targetPath = path.join(agentsDir, targetName);
+
+      // Don't overwrite existing files — user may have customized them
+      if (fs.existsSync(targetPath)) continue;
+
+      const sourcePath = path.join(packageAgentsDir, file);
+      fs.copyFileSync(sourcePath, targetPath);
+      installed++;
+    }
+
+    if (installed > 0) {
+      pi.log?.(`model-guardrails: installed ${installed} agent config(s)`);
+    }
   });
 }

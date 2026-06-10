@@ -94,15 +94,17 @@ The key is a **substring match** against the lowercase model ID. So `"gemma-4-12
 
 ## Companion: Subagent Guardrails
 
-For delegated subagent tasks, this repo also includes task-specific agent configs that you can copy to `~/.pi/agent/agents/`:
+This package also includes task-specific agent configs. They are **automatically installed** to `~/.pi/agent/agents/` on first startup — no manual setup needed.
 
 | Agent | Use Case |
 |-------|----------|
-| `gemma-debugger` | Forces full bug list + complete fixed code |
-| `gemma-reviewer` | Forces findings + refactored code, anti-repetition |
-| `gemma-algo-solver` | Forces approach + code + test cases per problem |
-| `gemma-polyglot` | Forces complete code in every language |
-| `gemma-architect` | Forces full specs, code, schema |
+| `delegate.gemma-debugger` | Forces full bug list + complete fixed code |
+| `delegate.gemma-reviewer` | Forces findings + refactored code, anti-repetition |
+| `delegate.gemma-algo-solver` | Forces approach + code + test cases per problem |
+| `delegate.gemma-polyglot` | Forces complete code in every language |
+| `delegate.gemma-architect` | Forces full specs, code, schema |
+
+Already-existing agent files are never overwritten, so you can safely customize them after installation.
 
 Usage:
 ```bash
