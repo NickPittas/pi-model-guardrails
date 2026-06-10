@@ -5,12 +5,19 @@ import fs from "node:fs";
 export default function (pi: ExtensionAPI) {
   // ── Configuration ──
 
+  // How thinking/reasoning is controlled for a model family.
+  // "budget" = llama.cpp thinking_budget_tokens (Gemma-style)
+  // "chat_template" = chat_template_kwargs.enable_thinking (Qwen-style)
+  type ThinkingMode = "budget" | "chat_template";
+
   interface ModelConfig {
     guardrail?: string;
     temperature?: number;
     maxTokens?: number;
-    // Reasoning budget in tokens. 0 = no reasoning, ~256 = balanced, ~512+ = deep.
-    // Requires llama.cpp server with reasoning support.
+    // How to control reasoning for this model family.
+    thinkingMode: ThinkingMode;
+    // For "budget" mode: default reasoning token budget.
+    // For "chat_template" mode: 0 = enable_thinking:false, 1+ = enable_thinking:true.
     defaultThinkingBudget?: number;
   }
 
@@ -39,6 +46,7 @@ export default function (pi: ExtensionAPI) {
   const MODEL_CONFIGS: Record<string, ModelConfig> = {
     "gemma-4-12b": {
       temperature: 0.7,
+      thinkingMode: "budget",
       defaultThinkingBudget: 0,
 
       guardrail: `You are a precise, thorough coding assistant.
@@ -51,6 +59,26 @@ OUTPUT DISCIPLINE:
 5. Do NOT use "...", "omitted for brevity", or "as shown above" as substitutes for actual output.
 6. If you realize you're about to output the same character or line repeatedly, STOP and produce different content.
 7. Do not include any internal reasoning, thought blocks, or "Let me think about this" preamble. Go directly to the output.
+
+STYLE:
+- Follow the exact output format the user requests.
+- When no format is specified, use clear markdown with headers and code blocks.
+- Prefer producing the actual content over describing what you would produce.`,
+    },
+    "qwen3.6-27b": {
+      temperature: 0.6, // Qwen server default is already good
+      thinkingMode: "chat_template",
+      defaultThinkingBudget: 0, // disable thinking by default for content tasks
+
+      guardrail: `You are a precise, thorough coding assistant.
+
+OUTPUT DISCIPLINE:
+1. When asked to write code, produce COMPLETE, runnable code — not snippets, not placeholders, not "// rest of code here".
+2. When asked to find bugs, list the bugs AND provide the full fixed code. Do not stop at just the list.
+3. When asked to review code, provide findings AND a refactored version. Not one or the other.
+4. When asked for multiple things (languages, problems, sections), complete EACH one fully. Do not skip items.
+5. Do NOT use "...", "omitted for brevity", or "as shown above" as substitutes for actual output.
+6. If you realize you're about to output the same character or line repeatedly, STOP and produce different content.
 
 STYLE:
 - Follow the exact output format the user requests.
@@ -119,10 +147,21 @@ STYLE:
       modified = true;
     }
 
-    // Inject llama.cpp reasoning control params
-    payload.thinking_budget_tokens = currentThinkingBudget;
-    payload.reasoning_control = true;
-    modified = true;
+    // Inject thinking/reasoning control based on model family
+    if (config.thinkingMode === "budget") {
+      // Gemma-style: llama.cpp thinking_budget_tokens + reasoning_control
+      payload.thinking_budget_tokens = currentThinkingBudget;
+      payload.reasoning_control = true;
+      modified = true;
+    } else if (config.thinkingMode === "chat_template") {
+      // Qwen-style: chat_template_kwargs.enable_thinking
+      // Budget 0 = disable thinking, 1+ = enable thinking
+      const enableThinking = currentThinkingBudget > 0;
+      const existingKwargs = (payload.chat_template_kwargs || {}) as Record<string, unknown>;
+      existingKwargs.enable_thinking = enableThinking;
+      payload.chat_template_kwargs = existingKwargs;
+      modified = true;
+    }
 
     if (modified) return payload;
   });
