@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI) {
     // Balanced — needs understanding but output volume matters
     "reviewer": 256,
     "refactor": 256,
+    "general": 256,
 
     // Brief — volume tasks where tokens should go to content
     "polyglot": 64,
