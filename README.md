@@ -58,7 +58,7 @@ The detection works by inspecting the system prompt for agent-identifying substr
 
 Settings are injected per-request via `before_provider_request`. Accepted reasoning values: `"none"`, `"low"`, `"medium"`, `"high"`.
 
-Note: the server may still produce some internal reasoning regardless — the `--reasoning on` flag at the server level can't be fully overridden by the API. The guardrail prompt instruction reinforces the no-reasoning behavior in the model's output text.
+Note: with `--reasoning auto` on llama.cpp, `reasoning_effort` has minimal effect — the model decides how much to reason based on task complexity. The real levers are **temperature** (0.7 keeps reasoning concise) and the **guardrail prompt** (prevents reasoning from leaking into output). The `reasoning_effort` setting is included for forward compatibility and may have stronger effect in future llama.cpp versions.
 
 ### Why temperature control matters
 At temp 1.5, Gemma 4 12B produces verbose reasoning that can consume the entire output budget before producing content. At temp 0.7, it reasons more concisely and reliably produces the actual output. The extension lets you keep the server at 1.5 for interactive exploration while automatically lowering it for structured tasks.
