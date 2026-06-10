@@ -1,6 +1,6 @@
 # pi-model-guardrails
 
-Automatically injects model-specific guardrails when using smaller or local models with [pi](https://pi.dev).
+Automatically injects model-specific guardrails, temperature, and generation settings when using smaller or local models with [pi](https://pi.dev).
 
 ## The Problem
 
@@ -10,28 +10,47 @@ Small local models (like Gemma 4 12B) are surprisingly capable, but they have **
 - They reason extensively but forget to output the result
 - They truncate or use "..." instead of writing complete code
 - They can get stuck in repetition loops
+- High temperature makes them reason *too much*, burning output tokens
 
-These aren't capability problems — the model *can* do the work. It just needs the right nudges.
+These aren't capability problems — the model *can* do the work. It just needs the right settings and nudges.
 
 ## The Solution
 
-This pi extension listens to `model_select` events and automatically prepends a tailored system prompt when a matching model is active. No manual steps — just select your model with `/model` and the guardrails are applied.
+This pi extension hooks into three events:
 
-## What the Guardrails Do
+1. **`model_select`** — tracks which model is active
+2. **`before_agent_start`** — injects a guardrail system prompt tailored to the model
+3. **`before_provider_request`** — overrides temperature and max_tokens per model
 
-- **Encourage reasoning** — explicitly tells the model to think about approach, edge cases, and correctness (this is a strength, not a weakness)
-- **Require concrete output** — after reasoning, always produce the actual artifact (code, analysis, etc.)
-- **Prevent truncation** — no "...", "omitted for brevity", or placeholder comments
-- **Prevent repetition** — detect and break out of character/line repetition loops
-- **Enforce completeness** — when asked for N things, produce all N
+No manual steps — just select your model with `/model` and everything is applied automatically.
+
+## What Gets Injected
+
+### Guardrails (system prompt)
+- **Encourages reasoning** — explicitly tells the model to think about approach, edge cases, and correctness
+- **Requires concrete output** — after reasoning, always produce the actual artifact
+- **Prevents truncation** — no "...", "omitted for brevity", or placeholder comments
+- **Prevents repetition** — detect and break out of character/line repetition loops
+
+### Generation settings
+| Model | Temperature | Reasoning Effort | Why |
+|-------|-------------|------------------|-----|
+| `gemma-4-12b` | 0.7 | `low` | Keeps reasoning concise so output tokens go to content |
+
+Settings are injected per-request via `before_provider_request`, overriding the server defaults. The server's reasoning mode (`--reasoning on`) is preserved — `reasoning_effort` controls *how much* the model reasons, not whether it reasons at all.
+
+Accepted values for `reasoningEffort`: `"none"`, `"low"`, `"medium"`, `"high"`.
+
+### Why temperature control matters
+At temp 1.5, Gemma 4 12B produces verbose reasoning that can consume the entire output budget before producing content. At temp 0.7, it reasons more concisely and reliably produces the actual output. The extension lets you keep the server at 1.5 for interactive exploration while automatically lowering it for structured tasks.
 
 ## Supported Models
 
-| Model ID Pattern | Guardrail |
-|------------------|-----------|
-| `gemma-4-12b` | General output discipline + reasoning guidance |
+| Model ID Pattern | Temperature | Guardrail |
+|------------------|-------------|-----------|
+| `gemma-4-12b` | 0.7 | Output discipline + reasoning guidance |
 
-Adding more models is easy — just add an entry to the `GUARDRAILS` object in `extensions/model-guardrails.ts`.
+Adding more models is easy — just add an entry to `MODEL_CONFIGS` in `extensions/model-guardrails.ts`.
 
 ## Installation
 
@@ -57,40 +76,41 @@ pi install /path/to/pi-model-guardrails
 
 ## Usage
 
-Just use your model normally. The guardrails are injected automatically.
+Just use your model normally. Everything is injected automatically.
 
 ```bash
 # In pi TUI:
 /model          # Select gemma-4-12b-it
-# Guardrails are now active for every prompt
+# Guardrails + temperature override are now active
 ```
 
 ## Adding Custom Models
 
-Edit `extensions/model-guardrails.ts` and add a new entry:
+Edit `extensions/model-guardrails.ts`:
 
 ```typescript
-const GUARDRAILS: Record<string, string> = {
-  "gemma-4-12b": `... existing guardrail ...`,
+const MODEL_CONFIGS: Record<string, ModelConfig> = {
+  "gemma-4-12b": {
+    temperature: 0.7,
+    guardrail: `... existing guardrail ...`,
+  },
 
-  "my-custom-model": `Your guardrail text here.
+  "my-custom-model": {
+    temperature: 0.5,
+    maxTokens: 8192,
+    guardrail: `Your guardrail text here.
 OUTPUT DISCIPLINE:
 1. ...
-2. ...
-
 REASONING GUIDANCE:
 - DO reason about ...
 - DO NOT ...`,
+  },
 };
 ```
 
 The key is a **substring match** against the lowercase model ID. So `"gemma-4-12b"` matches `gemma-4-12b-it-Q8_0`.
 
-## How It Works
-
-1. On `model_select` → tracks the active model ID
-2. On `before_agent_start` → checks if the active model matches a guardrail pattern
-3. If matched → prepends the guardrail text to the system prompt
+Set any field to `undefined` to skip that override.
 
 ## Companion: Subagent Guardrails
 
@@ -110,6 +130,12 @@ Usage:
 ```bash
 pi subagent delegate.gemma-debugger --model llama-mustafar/gemma-4-12b-it-Q8_0 --task "Find bugs in this code: ..."
 ```
+
+## How It Works
+
+1. On `model_select` → tracks the active model ID
+2. On `before_agent_start` → prepends guardrail text to the system prompt
+3. On `before_provider_request` → injects `temperature`, `reasoning_effort`, and `max_tokens` into the API payload
 
 ## License
 

@@ -3,10 +3,22 @@ import path from "node:path";
 import fs from "node:fs";
 
 export default function (pi: ExtensionAPI) {
-  // ── Model-specific guardrail system prompts ──
-  // Key: lowercase model id substring match. Value: system prompt to prepend.
-  const GUARDRAILS: Record<string, string> = {
-    "gemma-4-12b": `You are a precise, thorough coding assistant. You reason well — use that reasoning to produce high-quality work, not as a substitute for it.
+  // ── Model configuration ──
+  // Each entry: guardrail prompt, temperature, reasoning_effort, and max_tokens.
+  // Key: lowercase model id substring match.
+  interface ModelConfig {
+    guardrail?: string;
+    temperature?: number;
+    reasoningEffort?: string; // "none" | "low" | "medium" | "high"
+    maxTokens?: number;
+  }
+
+  const MODEL_CONFIGS: Record<string, ModelConfig> = {
+    "gemma-4-12b": {
+      temperature: 0.7,
+      reasoningEffort: "low",
+
+      guardrail: `You are a precise, thorough coding assistant. You reason well — use that reasoning to produce high-quality work, not as a substitute for it.
 
 OUTPUT DISCIPLINE:
 1. When asked to write code, produce COMPLETE, runnable code — not snippets, not placeholders, not "// rest of implementation here".
@@ -26,33 +38,66 @@ STYLE:
 - When no format is specified, use clear markdown with headers and code blocks.
 - Prefer producing the actual content over describing what you would produce.`,
 
-    // Add more models here. Example:
-    // "qwen3": `...guardrail text...`,
+      // Add more models here. Examples:
+      // "qwen3": {
+      //   temperature: 0.8,
+      //   reasoningEffort: "medium",
+      //   guardrail: `...`,
+      // },
+    },
   };
 
-  // ── Guardrail extension ──
+  // ── Track current model ──
   let currentModelId: string | undefined;
 
   pi.on("model_select", async (event, _ctx) => {
     currentModelId = event.model.id.toLowerCase();
   });
 
-  pi.on("before_agent_start", async (event, _ctx) => {
-    if (!currentModelId) return;
-
-    let matchedGuardrail: string | undefined;
-    for (const [pattern, prompt] of Object.entries(GUARDRAILS)) {
+  // ── Resolve config for current model ──
+  function getConfig(): ModelConfig | undefined {
+    if (!currentModelId) return undefined;
+    for (const [pattern, config] of Object.entries(MODEL_CONFIGS)) {
       if (currentModelId.includes(pattern.toLowerCase())) {
-        matchedGuardrail = prompt;
-        break;
+        return config;
       }
     }
+    return undefined;
+  }
 
-    if (!matchedGuardrail) return;
-
+  // ── Inject guardrail into system prompt ──
+  pi.on("before_agent_start", async (event, _ctx) => {
+    const config = getConfig();
+    if (!config?.guardrail) return;
     return {
-      systemPrompt: matchedGuardrail + "\n\n" + event.systemPrompt,
+      systemPrompt: config.guardrail + "\n\n" + event.systemPrompt,
     };
+  });
+
+  // ── Inject temperature, reasoning_effort, and max_tokens into API request ──
+  pi.on("before_provider_request", (event, _ctx) => {
+    const config = getConfig();
+    if (!config) return;
+
+    const payload = event.payload as Record<string, unknown>;
+    let modified = false;
+
+    if (config.temperature !== undefined) {
+      payload.temperature = config.temperature;
+      modified = true;
+    }
+
+    if (config.maxTokens !== undefined) {
+      payload.max_tokens = config.maxTokens;
+      modified = true;
+    }
+
+    if (config.reasoningEffort !== undefined) {
+      payload.reasoning_effort = config.reasoningEffort;
+      modified = true;
+    }
+
+    if (modified) return payload;
   });
 
   // ── Agent installer ──
