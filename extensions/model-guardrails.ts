@@ -3,22 +3,40 @@ import path from "node:path";
 import fs from "node:fs";
 
 export default function (pi: ExtensionAPI) {
-  // ── Model configuration ──
-  // Each entry: guardrail prompt, temperature, reasoning_effort, and max_tokens.
-  // Key: lowercase model id substring match.
+  // ── Configuration ──
+
   interface ModelConfig {
     guardrail?: string;
     temperature?: number;
-    reasoningEffort?: string; // "none" | "low" | "medium" | "high"
     maxTokens?: number;
   }
+
+  // Per-agent reasoning effort overrides.
+  // Detected by searching the agent's system prompt for these substrings.
+  // Keys are lowercase substrings to match in the system prompt.
+  const AGENT_REASONING: Record<string, string> = {
+    // High reasoning: tasks that need deep analysis
+    "debugger": "high",
+    "security": "high",
+    "algo-solver": "high",
+
+    // Medium reasoning: tasks that need understanding but output is priority
+    "reviewer": "medium",
+    "refactor": "medium",
+
+    // Low reasoning: volume tasks where tokens should go to content
+    "polyglot": "low",
+    "architect": "low",
+    "code-gen": "low",
+  };
+
+  const DEFAULT_REASONING = "none";
 
   const MODEL_CONFIGS: Record<string, ModelConfig> = {
     "gemma-4-12b": {
       temperature: 0.7,
-      reasoningEffort: "none",
 
-      guardrail: `You are a precise, thorough coding assistant. You reason well — use that reasoning to produce high-quality work, not as a substitute for it.
+      guardrail: `You are a precise, thorough coding assistant.
 
 OUTPUT DISCIPLINE:
 1. When asked to write code, produce COMPLETE, runnable code — not snippets, not placeholders, not "// rest of implementation here".
@@ -33,25 +51,19 @@ STYLE:
 - Follow the exact output format the user requests.
 - When no format is specified, use clear markdown with headers and code blocks.
 - Prefer producing the actual content over describing what you would produce.`,
-
-      // Add more models here. Examples:
-      // "qwen3": {
-      //   temperature: 0.8,
-      //   reasoningEffort: "medium",
-      //   guardrail: `...`,
-      // },
     },
   };
 
-  // ── Track current model ──
+  // ── State ──
   let currentModelId: string | undefined;
+  let currentReasoningEffort: string = DEFAULT_REASONING;
 
   pi.on("model_select", async (event, _ctx) => {
     currentModelId = event.model.id.toLowerCase();
   });
 
-  // ── Resolve config for current model ──
-  function getConfig(): ModelConfig | undefined {
+  // ── Resolve model config ──
+  function getModelConfig(): ModelConfig | undefined {
     if (!currentModelId) return undefined;
     for (const [pattern, config] of Object.entries(MODEL_CONFIGS)) {
       if (currentModelId.includes(pattern.toLowerCase())) {
@@ -61,18 +73,30 @@ STYLE:
     return undefined;
   }
 
-  // ── Inject guardrail into system prompt ──
+  // ── Detect agent type from system prompt and set reasoning level ──
   pi.on("before_agent_start", async (event, _ctx) => {
-    const config = getConfig();
-    if (!config?.guardrail) return;
+    const config = getModelConfig();
+    if (!config) return;
+
+    // Detect which agent is running by checking the system prompt
+    const prompt = (event.systemPrompt || "").toLowerCase();
+    let detectedReasoning = DEFAULT_REASONING;
+    for (const [substring, reasoning] of Object.entries(AGENT_REASONING)) {
+      if (prompt.includes(substring.toLowerCase())) {
+        detectedReasoning = reasoning;
+        break;
+      }
+    }
+    currentReasoningEffort = detectedReasoning;
+
     return {
       systemPrompt: config.guardrail + "\n\n" + event.systemPrompt,
     };
   });
 
-  // ── Inject temperature, reasoning_effort, and max_tokens into API request ──
+  // ── Inject generation settings into API request ──
   pi.on("before_provider_request", (event, _ctx) => {
-    const config = getConfig();
+    const config = getModelConfig();
     if (!config) return;
 
     const payload = event.payload as Record<string, unknown>;
@@ -88,17 +112,14 @@ STYLE:
       modified = true;
     }
 
-    if (config.reasoningEffort !== undefined) {
-      payload.reasoning_effort = config.reasoningEffort;
-      modified = true;
-    }
+    // Use the reasoning effort detected from the agent type
+    payload.reasoning_effort = currentReasoningEffort;
+    modified = true;
 
     if (modified) return payload;
   });
 
   // ── Agent installer ──
-  // Copies companion agent configs to ~/.pi/agent/agents/ on first startup.
-  // Safe to run repeatedly — won't overwrite user modifications.
   pi.on("session_start", async (event, _ctx) => {
     if (event.reason !== "startup" && event.reason !== "reload") return;
 
@@ -124,7 +145,6 @@ STYLE:
       const targetName = `delegate.${file}`;
       const targetPath = path.join(agentsDir, targetName);
 
-      // Don't overwrite existing files — user may have customized them
       if (fs.existsSync(targetPath)) continue;
 
       const sourcePath = path.join(packageAgentsDir, file);

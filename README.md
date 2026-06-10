@@ -32,14 +32,33 @@ No manual steps — just select your model with `/model` and everything is appli
 - **Prevents truncation** — no "...", "omitted for brevity", or placeholder comments
 - **Prevents repetition** — detect and break out of character/line repetition loops
 
+### Reasoning strategy
+
+Reasoning is the model's **biggest strength** — but it burns output tokens. The extension automatically adjusts `reasoning_effort` based on which agent is running:
+
+| Task Type | Reasoning | Why |
+|-----------|-----------|-----|
+| Debugging (`gemma-debugger`) | `high` | Must trace logic, find edge cases, reason about each bug |
+| Security audit | `high` | Must reason about attack vectors, chaining, severity |
+| Algorithms (`gemma-algo-solver`) | `high` | Must reason about correctness, complexity, edge cases |
+| Code review (`gemma-reviewer`) | `medium` | Needs to understand code deeply, but output is priority |
+| Refactoring | `medium` | Needs to understand before/after, but output is priority |
+| Multi-language (`gemma-polyglot`) | `low` | Volume task — 5-8 complete implementations needed |
+| API design (`gemma-architect`) | `low` | Volume task — YAML + SQL + code + examples |
+| Code generation | `low` | Just needs to write — reasoning wastes tokens |
+| **Default (direct `/model` use)** | **`none`** | **Safe default — all tokens go to content** |
+
+The detection works by inspecting the system prompt for agent-identifying substrings (e.g. "debugger", "reviewer", "polyglot").
+
 ### Generation settings
-| Model | Temperature | Reasoning Effort | Why |
-|-------|-------------|------------------|-----|
-| `gemma-4-12b` | 0.7 | `none` | Eliminates reasoning overhead so all tokens go to content |
 
-Settings are injected per-request via `before_provider_request`, overriding the server defaults. Even with the server's `--reasoning on`, `reasoning_effort: "none"` plus the guardrail instruction to skip reasoning/thought blocks ensures all output tokens go to actual content.
+| Model | Temperature | Default Reasoning |
+|-------|-------------|-------------------|
+| `gemma-4-12b` | 0.7 | `none` (overridden per-agent as above) |
 
-Accepted values for `reasoningEffort`: `"none"`, `"low"`, `"medium"`, `"high"`. Note: the server may still produce some internal reasoning regardless of this setting — the guardrail prompt instruction reinforces the no-reasoning behavior in the model's output.
+Settings are injected per-request via `before_provider_request`. Accepted reasoning values: `"none"`, `"low"`, `"medium"`, `"high"`.
+
+Note: the server may still produce some internal reasoning regardless — the `--reasoning on` flag at the server level can't be fully overridden by the API. The guardrail prompt instruction reinforces the no-reasoning behavior in the model's output text.
 
 ### Why temperature control matters
 At temp 1.5, Gemma 4 12B produces verbose reasoning that can consume the entire output budget before producing content. At temp 0.7, it reasons more concisely and reliably produces the actual output. The extension lets you keep the server at 1.5 for interactive exploration while automatically lowering it for structured tasks.
