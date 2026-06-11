@@ -7,8 +7,8 @@ export default function (pi: ExtensionAPI) {
 
   // How thinking/reasoning is controlled for a model family.
   // "budget" = llama.cpp thinking_budget_tokens (Gemma-style)
-  // "chat_template" = chat_template_kwargs.enable_thinking (Qwen-style)
-  type ThinkingMode = "budget" | "chat_template";
+  // "chat_template_budget" = Qwen-style: reasoning_format=deepseek + thinking_budget_tokens + chat_template_kwargs
+  type ThinkingMode = "budget" | "chat_template_budget";
 
   interface ModelConfig {
     guardrail?: string;
@@ -16,38 +16,66 @@ export default function (pi: ExtensionAPI) {
     maxTokens?: number;
     // How to control reasoning for this model family.
     thinkingMode: ThinkingMode;
-    // For "budget" mode: default reasoning token budget.
-    // For "chat_template" mode: 0 = enable_thinking:false, 1+ = enable_thinking:true.
+    // Default reasoning token budget (applies to both modes).
     defaultThinkingBudget?: number;
+    // Per-tier token budgets. Maps tier name to token count.
+    // -1 = unlimited. Required for chat_template_budget mode.
+    budgetTiers?: Record<string, number>;
   }
 
-  // Per-agent thinking budget overrides (in tokens).
-  // Detected by searching the system prompt for these substrings.
-  // 0 = no reasoning, 128 = brief, 256 = balanced, 512+ = deep analysis
-  const AGENT_THINKING_BUDGET: Record<string, number> = {
-    // Deep analysis tasks — reasoning is the model's strength
-    "debugger": 512,
-    "security": 512,
-    "algo-solver": 512,
+  // Per-agent thinking budget tiers.
+  // "max" = unlimited reasoning (planning, complex architecture)
+  // "high" = deep reasoning (review, debugging, security)
+  // "medium" = balanced (general tasks, refactoring)
+  // "low" = brief (code gen, polyglot translation)
+  // "none" = no reasoning (search, explore, simple execution)
+  //
+  // The numeric budget is applied per model family via BUDGET_TIERS.
+  type BudgetTier = "max" | "high" | "medium" | "low" | "none";
 
-    // Balanced — needs understanding but output volume matters
-    "reviewer": 256,
-    "refactor": 256,
-    "general": 256,
+  const AGENT_BUDGET_TIER: Record<string, BudgetTier> = {
+    // Max reasoning — planning and complex multi-step analysis
+    "planner": "max",
+    "architect": "max",
+    "iterative": "max",
 
-    // Brief — volume tasks where tokens should go to content
-    "polyglot": 64,
-    "architect": 64,
-    "code-gen": 64,
+    // High reasoning — deep analysis where quality matters most
+    "debugger": "high",
+    "security": "high",
+    "algo-solver": "high",
+    "reviewer": "high",
+    "auditor": "high",
+
+    // Medium — balanced tasks
+    "general": "medium",
+    "refactor": "medium",
+
+    // Low — volume tasks, reasoning minimal
+    "code-gen": "low",
+    "polyglot": "low",
+
+    // No reasoning — search, explore, simple execution
+    "search": "none",
+    "explore": "none",
+    "library": "none",
+    "scout": "none",
   };
 
-  const DEFAULT_THINKING_BUDGET = 0; // No reasoning for unknown tasks
+  const DEFAULT_BUDGET_TIER: BudgetTier = "medium"; // Safe default for unknown agents
 
   const MODEL_CONFIGS: Record<string, ModelConfig> = {
     "gemma-4-12b": {
       temperature: 0.7,
       thinkingMode: "budget",
       defaultThinkingBudget: 0,
+
+      budgetTiers: {
+        max: 1024,   // Gemma 12B is smaller — cap even max tasks
+        high: 512,   // deep analysis
+        medium: 256, // balanced
+        low: 64,     // brief
+        none: 0,     // no reasoning
+      } as Record<BudgetTier, number>,
 
       guardrail: `You are a precise, thorough coding assistant.
 
@@ -66,9 +94,20 @@ STYLE:
 - Prefer producing the actual content over describing what you would produce.`,
     },
     "qwen3.6": {
-      temperature: 0.6, // Qwen server default is already good
-      thinkingMode: "chat_template",
-      defaultThinkingBudget: 0, // disable thinking by default for content tasks
+      temperature: 0.6,
+      thinkingMode: "chat_template_budget",
+      defaultThinkingBudget: 0,
+
+      // Per-tier token budgets for Qwen models.
+      // These work because we pass reasoning_format="deepseek" which
+      // gives the server start/end tags to enforce the budget.
+      budgetTiers: {
+        max: -1,     // unlimited — let the model reason fully
+        high: 2048,  // deep analysis — bug hunting, security audit
+        medium: 1024, // balanced — general coding tasks
+        low: 512,    // brief — code gen, translation
+        none: 0,     // no reasoning — search, explore
+      } as Record<BudgetTier, number>,
 
       guardrail: `You are a precise, thorough coding assistant.
 
@@ -89,7 +128,7 @@ STYLE:
 
   // ── State ──
   let currentModelId: string | undefined;
-  let currentThinkingBudget: number = DEFAULT_THINKING_BUDGET;
+  let currentTier: BudgetTier = DEFAULT_BUDGET_TIER;
 
   pi.on("model_select", async (event, _ctx) => {
     currentModelId = event.model.id.toLowerCase();
@@ -106,21 +145,21 @@ STYLE:
     return undefined;
   }
 
-  // ── Detect agent type from system prompt and set thinking budget ──
+  // ── Detect agent type from system prompt and set thinking tier ──
   pi.on("before_agent_start", async (event, _ctx) => {
     const config = getModelConfig();
     if (!config) return;
 
     // Detect which agent is running by checking the system prompt
     const prompt = (event.systemPrompt || "").toLowerCase();
-    let detectedBudget = config.defaultThinkingBudget ?? DEFAULT_THINKING_BUDGET;
-    for (const [substring, budget] of Object.entries(AGENT_THINKING_BUDGET)) {
+    let detectedTier: BudgetTier = DEFAULT_BUDGET_TIER;
+    for (const [substring, tier] of Object.entries(AGENT_BUDGET_TIER)) {
       if (prompt.includes(substring.toLowerCase())) {
-        detectedBudget = budget;
+        detectedTier = tier;
         break;
       }
     }
-    currentThinkingBudget = detectedBudget;
+    currentTier = detectedTier;
 
     if (config.guardrail) {
       return {
@@ -147,16 +186,30 @@ STYLE:
       modified = true;
     }
 
+    // Resolve numeric budget from tier
+    const tiers = config.budgetTiers;
+    let budget: number;
+    if (tiers && currentTier in tiers) {
+      budget = tiers[currentTier];
+    } else {
+      budget = config.defaultThinkingBudget ?? 0;
+    }
+
     // Inject thinking/reasoning control based on model family
     if (config.thinkingMode === "budget") {
       // Gemma-style: llama.cpp thinking_budget_tokens + reasoning_control
-      payload.thinking_budget_tokens = currentThinkingBudget;
+      payload.thinking_budget_tokens = budget;
       payload.reasoning_control = true;
       modified = true;
-    } else if (config.thinkingMode === "chat_template") {
-      // Qwen-style: chat_template_kwargs.enable_thinking
-      // Budget 0 = disable thinking, 1+ = enable thinking
-      const enableThinking = currentThinkingBudget > 0;
+    } else if (config.thinkingMode === "chat_template_budget") {
+      // Qwen-style: reasoning_format=deepseek enables thinking_budget_tokens
+      // AND chat_template_kwargs.enable_thinking controls the template.
+      // Both must work together for budget enforcement.
+      payload.reasoning_format = "deepseek";
+      payload.thinking_budget_tokens = budget;
+      payload.reasoning_control = true;
+
+      const enableThinking = budget !== 0;
       const existingKwargs = (payload.chat_template_kwargs || {}) as Record<string, unknown>;
       existingKwargs.enable_thinking = enableThinking;
       payload.chat_template_kwargs = existingKwargs;
